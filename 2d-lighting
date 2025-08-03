@@ -1,0 +1,325 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Filmmaker 布置工具 V1.7 双语版</title>
+  <style>
+    body {
+      margin: 0;
+      font-family: -apple-system, BlinkMacSystemFont, "Helvetica Neue", sans-serif;
+      background: #f9f9f9;
+      color: #333;
+    }
+    header {
+      text-align: center;
+      padding: 16px;
+      font-size: 18px;
+      font-weight: 500;
+    }
+    #toolbar, #controlPanel {
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: center;
+      gap: 8px;
+      padding: 8px;
+      background: #fff;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+    }
+    button {
+      border: none;
+      padding: 8px 12px;
+      border-radius: 8px;
+      background: #e5e5e5;
+      cursor: pointer;
+      font-size: 14px;
+      line-height: 1;
+      transition: background 0.2s;
+    }
+    button:hover {
+      background: #d4d4d4;
+    }
+    input[type="number"], input[type="color"], input[type="text"] {
+      padding: 6px;
+      border-radius: 6px;
+      border: 1px solid #ccc;
+      font-size: 13px;
+      width: 70px;
+      box-sizing: border-box;
+    }
+    label {
+      display: flex;
+      align-items: center;
+      font-size: 13px;
+    }
+    label span {
+      margin-right: 4px;
+    }
+    canvas {
+      display: block;
+      width: 100%;
+      background: #f0f0f0;
+      cursor: grab;
+    }
+  </style>
+</head>
+<body>
+
+<header>Design by Mengxing Chen – Filmmaker Layout V1.7 双语版</header>
+
+<div id="toolbar">
+  <button onclick="addElement('person')">添加人物 Add Person</button>
+  <button onclick="addElement('camera')">添加相机 Add Camera</button>
+  <button onclick="addElement('light')">添加灯光 Add Light</button>
+  <button onclick="addElement('rectangle')">添加矩形 Add Rect</button>
+  <button onclick="addTextBox()">添加文本 Add Text</button>
+  <button onclick="addPath()">添加轨迹 Add Path</button>
+  <button onclick="toggleGrid()">网格切换 Grid</button>
+</div>
+
+<canvas id="canvas" width="1920" height="800"></canvas>
+
+<div id="controlPanel">
+  <label><span>横 X</span><input id="posX" type="number" onchange="updateSelected('x')"></label>
+  <label><span>纵 Y</span><input id="posY" type="number" onchange="updateSelected('y')"></label>
+  <label><span>宽 W</span><input id="width" type="number" onchange="updateSelected('width')"></label>
+  <label><span>高 H</span><input id="height" type="number" onchange="updateSelected('height')"></label>
+  <label><span>旋转 R</span><button onclick="rotateSelected()">30°</button></label>
+  <label><span>颜色 C</span><input id="colorPicker" type="color" onchange="updateSelected('color')"></label>
+  <label><span>注释 N</span><input id="noteText" type="text" onchange="updateSelected('note')"></label>
+</div>
+
+<script>
+const canvas = document.getElementById('canvas'),
+      ctx = canvas.getContext('2d');
+let elements = [], selected=null, dragging=false, draggingPath=false,
+    offsetX=0, offsetY=0, showGrid=false,
+    counters={person:0,camera:0,light:0,rectangle:0,text:0};
+
+// 添加各种元素
+function addElement(type){
+  counters[type]++;
+  const base = {
+    id:counters[type], type,
+    x:960,y:400,
+    width:(type==='rectangle'?150:100),
+    height:(type==='rectangle'?80:100),
+    rotation:0,color:'#888',
+    note:'',focal:(type==='camera'?'35':''),
+    path:null
+  };
+  elements.push(base); draw();
+}
+function addTextBox(){
+  counters.text++;
+  elements.push({
+    id:counters.text, type:'text',
+    x:960,y:400, text:'双击编辑 Double-click', color:'#333'
+  });
+  draw();
+}
+// 添加矩形
+function addRectangle(){
+  addElement('rectangle');
+}
+function addPath(){
+  if(selected&&selected.type==='camera'){
+    selected.path={x:selected.x+200,y:selected.y};
+    draw();
+  } else alert('先选中相机元素 Select a camera first');
+}
+// 网格显示/隐藏
+function toggleGrid(){ showGrid=!showGrid; draw(); }
+
+// 网格绘制
+function drawGrid(){
+  ctx.strokeStyle='#ddd'; ctx.lineWidth=0.5;
+  for(let x=0;x<=canvas.width;x+=100){
+    ctx.beginPath();ctx.moveTo(x,0);ctx.lineTo(x,canvas.height);ctx.stroke();
+  }
+  for(let y=0;y<=canvas.height;y+=100){
+    ctx.beginPath();ctx.moveTo(0,y);ctx.lineTo(canvas.width,y);ctx.stroke();
+  }
+}
+
+// 各元素绘制
+function drawPerson(el){
+  ctx.fillStyle=el.color;
+  ctx.beginPath();ctx.arc(0,0,30,0,2*Math.PI);ctx.fill();
+  ctx.beginPath();ctx.ellipse(0,10,30,10,Math.PI/2,0,2*Math.PI);ctx.fill();
+  // 朝向线
+  const ang=(el.rotation-90)*Math.PI/180;
+  ctx.strokeStyle='#000';ctx.lineWidth=2;
+  ctx.beginPath();ctx.moveTo(0,0);
+  ctx.lineTo(40*Math.cos(ang),40*Math.sin(ang));ctx.stroke();
+  // 编号
+  ctx.fillStyle='#000';ctx.font='14px sans-serif';
+  ctx.textAlign='center';ctx.fillText('P'+el.id,0,-40);
+}
+function drawCamera(el){
+  ctx.fillStyle=el.color;
+  // 机身
+  ctx.fillRect(-40,-25,80,50);
+  // 镜头矩形根据焦段长度变化 (焦段系数)
+  const len = 10 + (parseInt(el.focal)||35)/5; 
+  ctx.fillRect(-len/2, -25-len, len, len);
+  // 焦距
+  ctx.fillStyle='#fff';ctx.font='12px sans-serif';
+  ctx.textAlign='center';ctx.fillText(el.focal+'mm',0,4);
+  // 编号
+  ctx.fillStyle='#000';ctx.font='14px sans-serif';
+  ctx.fillText('C'+el.id,0,-40);
+  // 轨迹线 + 箭头
+  if(el.path){
+    ctx.strokeStyle='#39f';ctx.lineWidth=2;
+    ctx.beginPath();ctx.moveTo(0,0);
+    ctx.lineTo(el.path.x-el.x,el.path.y-el.y);ctx.stroke();
+    // 箭头
+    const dx=el.path.x-el.x, dy=el.path.y-el.y, L=Math.hypot(dx,dy);
+    if(L>0){
+      const ux=dx/L, uy=dy/L, a=12;
+      const px=el.path.x-el.x, py=el.path.y-el.y;
+      ctx.beginPath();
+      ctx.moveTo(px,py);
+      ctx.lineTo(px-ux*a-uy*(a/2), py-uy*a+ux*(a/2));
+      ctx.lineTo(px-ux*a+uy*(a/2), py-uy*a-ux*(a/2));
+      ctx.closePath();ctx.fillStyle='#39f';ctx.fill();
+    }
+    // 终点圆点
+    ctx.beginPath();ctx.arc(el.path.x-el.x,el.path.y-el.y,6,0,2*Math.PI);ctx.fill();
+  }
+}
+function drawLight(el){
+  ctx.fillStyle=el.color;
+  ctx.beginPath();
+  ctx.moveTo(0,-40);ctx.lineTo(30,40);ctx.lineTo(-30,40);ctx.closePath();ctx.fill();
+  ctx.fillStyle='#000';ctx.font='14px sans-serif';ctx.textAlign='center';
+  ctx.fillText('L'+el.id,0,-50);
+}
+function drawRectangle(el){
+  ctx.fillStyle=el.color;
+  ctx.fillRect(-el.width/2,-el.height/2,el.width,el.height);
+  ctx.fillStyle='#000';ctx.font='14px sans-serif';ctx.textAlign='center';
+  ctx.fillText('R'+el.id,0,-el.height/2-10);
+}
+function drawText(el){
+  ctx.fillStyle=el.color;ctx.font='14px sans-serif';ctx.textAlign='center';
+  ctx.fillText(el.text,0,0);
+  ctx.fillStyle='#000';ctx.font='12px sans-serif';
+  ctx.fillText('T'+el.id,0,20);
+}
+
+function draw(){
+  ctx.clearRect(0,0,canvas.width,canvas.height);
+  if(showGrid) drawGrid();
+  for(const el of elements){
+    ctx.save();ctx.translate(el.x,el.y);
+    ctx.rotate(el.rotation*Math.PI/180);
+    switch(el.type){
+      case 'person': drawPerson(el); break;
+      case 'camera': drawCamera(el); break;
+      case 'light':  drawLight(el); break;
+      case 'rectangle': drawRectangle(el); break;
+      case 'text':   drawText(el); break;
+    }
+    ctx.restore();
+  }
+}
+
+// 交互逻辑
+canvas.addEventListener('mousedown',e=>{
+  const r=canvas.getBoundingClientRect(),
+        mx=(e.clientX-r.left)*1920/r.width,
+        my=(e.clientY-r.top)*800/r.height;
+  selected=null;draggingPath=false;
+  for(const el of elements){
+    if(el.type==='camera'&&el.path&&Math.hypot(mx-el.path.x,my-el.path.y)<10){
+      selected=el;draggingPath=true;break;
+    }
+    if(el.type==='rectangle'&&
+       mx>el.x-el.width/2&&mx<el.x+el.width/2&&
+       my>el.y-el.height/2&&my<el.y+el.height/2){
+      selected=el;draggingPath=false;break;
+    }
+    if(el.type==='person'||el.type==='camera'||el.type==='light'){
+      if(Math.hypot(mx-el.x,my-el.y)<50){
+        selected=el;draggingPath=false;break;
+      }
+    }
+    if(el.type==='text'&&Math.hypot(mx-el.x,my-el.y)<50){
+      selected=el;draggingPath=false;break;
+    }
+  }
+  if(selected){
+    offsetX = draggingPath?(mx-selected.path.x):(mx-selected.x);
+    offsetY = draggingPath?(my-selected.path.y):(my-selected.y);
+    dragging=true; updateControlPanel();
+  }
+});
+canvas.addEventListener('mousemove',e=>{
+  if(dragging&&selected){
+    const r=canvas.getBoundingClientRect(),
+          mx=(e.clientX-r.left)*1920/r.width,
+          my=(e.clientY-r.top)*800/r.height;
+    if(draggingPath){
+      selected.path.x = mx-offsetX;
+      selected.path.y = my-offsetY;
+    } else {
+      selected.x = mx-offsetX;
+      selected.y = my-offsetY;
+    }
+    draw(); updateControlPanel();
+  }
+});
+canvas.addEventListener('mouseup',()=>{dragging=false;});
+
+canvas.addEventListener('dblclick',e=>{
+  const r=canvas.getBoundingClientRect(),
+        mx=(e.clientX-r.left)*1920/r.width,
+        my=(e.clientY-r.top)*800/r.height;
+  for(const el of elements){
+    if(Math.hypot(mx-el.x,my-el.y)<50){
+      if(el.type==='camera'){
+        const nf=prompt('输入新的焦距(mm):',el.focal);
+        if(nf!==null){el.focal=nf;draw();}
+      }
+      if(el.type==='text'){
+        const nt=prompt('输入新的文本内容:',el.text);
+        if(nt!==null){el.text=nt;draw();}
+      }
+      break;
+    }
+  }
+});
+
+function updateControlPanel(){
+  if(!selected||selected.type==='text')return;
+  document.getElementById('posX').value=Math.round(selected.x);
+  document.getElementById('posY').value=Math.round(selected.y);
+  document.getElementById('width').value=selected.width;
+  document.getElementById('height').value=selected.height;
+  document.getElementById('colorPicker').value=selected.color;
+  document.getElementById('noteText').value=selected.note;
+}
+
+function updateSelected(field){
+  if(!selected)return;
+  if(field==='x')selected.x=parseInt(document.getElementById('posX').value);
+  if(field==='y')selected.y=parseInt(document.getElementById('posY').value);
+  if(field==='width')selected.width=parseInt(document.getElementById('width').value);
+  if(field==='height')selected.height=parseInt(document.getElementById('height').value);
+  if(field==='color')selected.color=document.getElementById('colorPicker').value;
+  if(field==='note')selected.note=document.getElementById('noteText').value;
+  draw();
+}
+
+function rotateSelected(){
+  if(!selected)return;
+  selected.rotation=(selected.rotation+30)%360; draw();
+}
+
+// 首次渲染
+draw();
+</script>
+</body>
+</html>
